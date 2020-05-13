@@ -105,18 +105,18 @@ default_init(void) {
 }
 
 static void
-default_init_memmap(struct Page *base, size_t n) {
+default_init_memmap(struct Page *base, size_t n) {//one free block consists of n pages,use base as the head.
     assert(n > 0);
     struct Page *p = base;
-    for (; p != base + n; p ++) {
+    for (; p != base + n; p ++) {//init all pages
         assert(PageReserved(p));
         p->flags = p->property = 0;
         set_page_ref(p, 0);
     }
-    base->property = n;
-    SetPageProperty(base);
+    base->property = n;//init the head page
+    SetPageProperty(base);//set the bit 1 of head page's flags to 1 which denotes that the page is free.
     nr_free += n;
-    list_add(&free_list, &(base->page_link));
+    list_add_before(&free_list, &(base->page_link));
 }
 
 static struct Page *
@@ -135,12 +135,14 @@ default_alloc_pages(size_t n) {
         }
     }
     if (page != NULL) {
-        list_del(&(page->page_link));
+        //next fit 
         if (page->property > n) {
             struct Page *p = page + n;
             p->property = page->property - n;
-            list_add(&free_list, &(p->page_link));
-    }
+			SetPageProperty(p);
+            list_add_after(&(page->page_link), &(p->page_link));
+		}
+		list_del(&(page->page_link));
         nr_free -= n;
         ClearPageProperty(page);
     }
@@ -152,13 +154,14 @@ default_free_pages(struct Page *base, size_t n) {
     assert(n > 0);
     struct Page *p = base;
     for (; p != base + n; p ++) {
-        assert(!PageReserved(p) && !PageProperty(p));
+        assert(!PageReserved(p) && !PageProperty(p));//make sure that p is used and is not reserved
         p->flags = 0;
         set_page_ref(p, 0);
     }
     base->property = n;
     SetPageProperty(base);
     list_entry_t *le = list_next(&free_list);
+	//merge the free block next to the base
     while (le != &free_list) {
         p = le2page(le, page_link);
         le = list_next(le);
@@ -175,7 +178,17 @@ default_free_pages(struct Page *base, size_t n) {
         }
     }
     nr_free += n;
-    list_add(&free_list, &(base->page_link));
+	//find the first page that is bigger than base,then add base before it(base is the free block after merge)
+	le = list_next(&free_list);
+	while(le != &free_list){
+		p = le2page(le,page_link);
+		if(base + base->property <= p){
+			assert(base + base->property != p);//since the free block never next to each other(otherwise they will be merged)
+			break;
+		}
+		le = list_next(le);
+	}
+    list_add_before(le, &(base->page_link));
 }
 
 static size_t
